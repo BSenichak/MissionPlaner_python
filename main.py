@@ -78,9 +78,14 @@ def fly_with_rc_override():
     # Фіксуємо Yaw на початку польоту (утримуємо одне значення весь політ)
     target_yaw_pwm = 1500
 
-    # І-складова
+    # І-складові для горизонтального руху
     err_y_integral = 0.0
     err_x_integral = 0.0
+
+    # І-складова для висоти
+    err_alt_integral = 0.0
+    ALT_I_GAIN = 0.3  # Коефіцієнт для інтегральної складової висоти
+    ALT_P_GAIN = 8.0  # Коефіцієнт для пропорційної складової висоти
 
     try:
         while True:
@@ -112,12 +117,21 @@ def fly_with_rc_override():
             pitch_pwm = PWM_NEUTRAL - (err_y * P_GAIN + err_y_integral * I_GAIN)
             roll_pwm = PWM_NEUTRAL + (err_x * P_GAIN + err_x_integral * I_GAIN)
 
-            # Утримання висоти (Канал 3) - плавна регуляція
+            # Утримання висоти (Канал 3) - PI-регулятор
             curr_alt = curr_loc.alt if curr_loc.alt is not None else TARGET_ALT
-            alt_error = TARGET_ALT - curr_alt
-            # Збільшили throttle для надійного зльоту
-            throttle_pwm = 1600 + int(alt_error * 5)  # Пропорційне управління
-            throttle_pwm = max(1500, min(1750, throttle_pwm))  # Обмеження
+            err_alt = TARGET_ALT - curr_alt
+
+            # Накопичуємо І-похибку висоти (анти-windup)
+            if abs(err_alt) > 2.0:  # Якщо відхилення більше 2м
+                err_alt_integral += err_alt
+                err_alt_integral = max(-30, min(30, err_alt_integral))
+            else:
+                # Скидаємо інтеграл коли близько до цільової висоти
+                err_alt_integral *= 0.8
+
+            # PI-регулятор висоти: 1500 + P*err + I*integral
+            throttle_pwm = 1500 + int(ALT_P_GAIN * err_alt + ALT_I_GAIN * err_alt_integral)
+            throttle_pwm = max(1400, min(1650, throttle_pwm))  # Обмеження
 
             # Обмеження значень
             pitch_pwm = max(PWM_NEUTRAL - MAX_TILT, min(PWM_NEUTRAL + MAX_TILT, pitch_pwm))
