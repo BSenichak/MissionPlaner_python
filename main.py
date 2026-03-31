@@ -34,36 +34,46 @@ def arm_and_takeoff(target_altitude):
     print("Підготовка до зльоту...")
     while not vehicle.is_armable:
         time.sleep(1)
+        print(f"  Очікування... GPS: {vehicle.gps_0}")
 
     print("Встановлюємо GUIDED mode...")
     vehicle.mode = VehicleMode("GUIDED")
-    time.sleep(3)  # Чекаємо переключення режиму
+    while vehicle.mode.name != "GUIDED":
+        time.sleep(0.5)
 
     print("Arming...")
     vehicle.armed = True
 
-    attempts = 0
-    while not vehicle.armed and attempts < 30:
-        time.sleep(1)
-        vehicle.armed = True
-        attempts += 1
+    # Чекаємо справжнього armed з таймаутом
+    start = time.time()
+    while not vehicle.armed and (time.time() - start) < 30:
+        time.sleep(0.5)
+        print(f"  Arming... attempts: {vehicle.armed}")
 
     if not vehicle.armed:
-        print("ПОПЕРЕДЖЕННЯ: Не вдалося armed, продовжуємо...")
+        print("КРИТИЧНА ПОМИЛКА: Не вдалося armed!")
+        return  # Не продовжуємо якщо не armed
 
     print(f"Зліт на {target_altitude}м...")
     vehicle.simple_takeoff(target_altitude)
 
+    # Чекаємо досягнення висоти з таймаутом
+    start = time.time()
     while True:
         alt = vehicle.location.global_relative_frame.alt
-        if alt >= target_altitude * 0.95:
+        print(f"  Поточна висота: {alt}")
+        if alt is not None and alt >= target_altitude * 0.95:
             print("Висоти досягнуто.")
             break
-        time.sleep(1)
+        if (time.time() - start) > 60:
+            print(f"ТАЙМАУТ: Не вдалося досягти висоти за 60с")
+            break
+        time.sleep(0.5)
 
 def fly_with_rc_override():
     print("Перехід в STABILIZE. Початок керування через RC Override.")
     vehicle.mode = VehicleMode("STABILIZE")
+    time.sleep(1)  # Чекаємо переключення режиму
 
     # Фіксуємо Yaw на початку польоту (утримуємо одне значення весь політ)
     target_yaw_pwm = 1500
@@ -105,8 +115,9 @@ def fly_with_rc_override():
             # Утримання висоти (Канал 3) - плавна регуляція
             curr_alt = curr_loc.alt if curr_loc.alt is not None else TARGET_ALT
             alt_error = TARGET_ALT - curr_alt
-            throttle_pwm = 1550 + int(alt_error * 5)  # Пропорційне управління
-            throttle_pwm = max(1450, min(1650, throttle_pwm))  # Обмеження
+            # Збільшили throttle для надійного зльоту
+            throttle_pwm = 1600 + int(alt_error * 5)  # Пропорційне управління
+            throttle_pwm = max(1500, min(1750, throttle_pwm))  # Обмеження
 
             # Обмеження значень
             pitch_pwm = max(PWM_NEUTRAL - MAX_TILT, min(PWM_NEUTRAL + MAX_TILT, pitch_pwm))
@@ -121,7 +132,7 @@ def fly_with_rc_override():
                 '4': target_yaw_pwm
             }
 
-            print(f"Дистанція: {dist:.1f}м | Roll: {int(roll_pwm)} | Pitch: {int(pitch_pwm)}")
+            print(f"Дистанція: {dist:.1f}м | Roll: {int(roll_pwm)} | Pitch: {int(pitch_pwm)} | Throttle: {int(throttle_pwm)}")
             time.sleep(0.1)
 
     finally:
