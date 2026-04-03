@@ -19,7 +19,7 @@ python main.py
 ```python
 target_lat = 50.443326
 target_lon = 30.448078
-target_alt = 200  # метрів
+target_alt = 200 
 ```
 
 ## Dependency

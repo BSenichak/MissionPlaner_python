@@ -1,4 +1,3 @@
-from typing import Optional  # noqa: F401
 import collections
 
 # Python 3.10+ compatibility: collections.MutableMapping moved to collections.abc
@@ -22,9 +21,14 @@ class DroneController:
         self.target_alt = 200
 
         # XY PID gains (lateral control)
-        self.P_GAIN = 6.0
-        self.I_GAIN = 0.5
-        self.MAX_TILT = 400  # max PWM deviation from neutral
+        self.P_GAIN = 25.0
+        self.I_GAIN = 0.15
+        self.D_GAIN = 2.0  # derivative term for damping
+
+        # Previous errors for derivative
+        self.prev_err_y = 0.0
+        self.prev_err_x = 0.0
+        self.MAX_TILT = 800  # max PWM deviation from neutral
         self.PWM_NEUTRAL = 1500
 
         # Altitude PI gains (vertical control)
@@ -128,10 +132,20 @@ class DroneController:
             self.err_y_integral *= 0.9
             self.err_x_integral *= 0.9
 
-        pitch = self.PWM_NEUTRAL - (err_y * self.P_GAIN + self.err_y_integral * self.I_GAIN)
-        roll = self.PWM_NEUTRAL + (err_x * self.P_GAIN + self.err_x_integral * self.I_GAIN)
+        # Derivative terms for damping oscillations
+        d_err_y = err_y - self.prev_err_y
+        d_err_x = err_x - self.prev_err_x
+        self.prev_err_y = err_y
+        self.prev_err_x = err_x
 
-        return pitch, roll
+        pitch = self.PWM_NEUTRAL - (err_y * self.P_GAIN + self.err_y_integral * self.I_GAIN + d_err_y * self.D_GAIN)  # Y: north-south
+        roll = self.PWM_NEUTRAL + (err_x * self.P_GAIN + self.err_x_integral * self.I_GAIN + d_err_x * self.D_GAIN)   # X: east-west
+
+        # Anti-windup: clamp final output to safe range
+        pitch = max(1100, min(1900, pitch))
+        roll = max(1100, min(1900, roll))
+
+        return pitch, roll, err_y, err_x
 
     def _compute_altitude_control(self, curr_alt: float):
         """
@@ -165,7 +179,7 @@ class DroneController:
         """
         Navigate to target: STABILIZE mode + RC overrides.
         Computed pitch/roll/throttle sent via channel overrides.
-        Exit when distance to target < 30m, then switch to LAND.
+        Exit when distance to target < 5m, then switch to LAND.
         """
         print("STABILIZE mode + RC override")
         self._set_mode("STABILIZE")
@@ -177,15 +191,22 @@ class DroneController:
                 loc = self.vehicle.location.global_relative_frame
                 dist = self.get_distance_metres(loc)
 
-                if dist < 30:
+                if dist < 10:
                     print(f"Goal achieved: {dist:.1f}m")
+                    # Send neutral before landing to stop movement
+                    self.vehicle.channels.overrides = {
+                        '1': 1500,
+                        '2': 1500,
+                        '3': 1500,
+                        '4': 1500
+                    }
                     break
 
                 curr_lat = loc.lat or 0.0
                 curr_lon = loc.lon or 0.0
                 curr_alt = loc.alt or self.target_alt
 
-                pitch, roll = self._compute_xy_control(curr_lat, curr_lon, dist)
+                pitch, roll, err_y, err_x = self._compute_xy_control(curr_lat, curr_lon, dist)
                 throttle = self._compute_altitude_control(curr_alt)
 
                 pitch = self._apply_limits(pitch)
@@ -199,7 +220,7 @@ class DroneController:
                     '4': target_yaw_pwm
                 }
 
-                print(f"Dist: {dist:.1f} | R:{roll} P:{pitch} T:{throttle}")
+                print(f"Dist: {dist:.1f} | errY:{err_y:.1f} errX:{err_x:.1f} | R:{roll} P:{pitch} T:{throttle}")
                 time.sleep(0.1)
 
         finally:

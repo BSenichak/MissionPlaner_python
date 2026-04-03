@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls D:/Projects/MissionPlaner_python/*.py)",
+      "Bash(dir D:\\\\Projects\\\\MissionPlaner_python\\\\*.py)",
+      "Bash(python test_control.py)"
+    ]
+  }
+}
